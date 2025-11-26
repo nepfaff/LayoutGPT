@@ -43,6 +43,7 @@ def get_extensions():
 
 
 def get_install_requirements():
+    # Note: simple-3dviz is installed via main pyproject.toml to avoid distutils conflicts
     return [
         "numpy",
         "torch",
@@ -51,7 +52,6 @@ def get_install_requirements():
         "trimesh",
         "matplotlib",
         "shapely",
-        "simple-3dviz",
         "scipy"
     ]
 

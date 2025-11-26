@@ -25,7 +25,7 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
-
+llm_output
 # PyInstaller
 #  Usually these files are written by a python script from a template
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
@@ -176,3 +176,11 @@ eval_models/GLIP/outputs
 assets/*.pdf
 assets/*.pptx
 assets/blender
+
+# Generated outputs
+llm_output/
+visualizations/
+ATISS/visualization/
+
+# Claude Code
+.claude/

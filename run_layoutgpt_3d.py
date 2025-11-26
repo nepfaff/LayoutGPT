@@ -1,7 +1,6 @@
 import os
 import os.path as op
 import json
-import pdb
 import clip
 import torch
 import numpy as np
@@ -10,15 +9,15 @@ import time
 import random
 from PIL import Image
 import argparse
-import openai
+from openai import OpenAI, APIError, RateLimitError, APIConnectionError, BadRequestError
 from utils import *
 
 from transformers import GPT2TokenizerFast
 
 from parse_llm_output import parse_3D_layout
 
-openai.organization = ""
-openai.api_key = "" 
+# Initialize OpenAI client (uses OPENAI_API_KEY env var)
+openai_client = OpenAI()
 tokenizer = GPT2TokenizerFast.from_pretrained("gpt2")
 
 
@@ -186,7 +185,6 @@ def form_prompt_for_gpt3(text_input, top_k, stats, supporting_examples,
         if args.test:
             print("retrieved examples:")
             print("\n".join(sorted_ids[:top_k]))
-            pdb.set_trace()
 
     # loop through the related supporting examples, check if the prompt length exceed limit
     for i, supporting_example in enumerate(supporting_examples[:top_k]):
@@ -329,7 +327,6 @@ def _main(args):
                 print(val_id)
                 print(prompt_for_gpt3)
                 print('\n' + '-'*30)
-                pdb.set_trace()
 
             if op.exists(op.join(args.output_dir, 'tmp', args.gpt_type, f"{val_id}.json")):
                 response = json.load(open(op.join(args.output_dir, 'tmp', args.gpt_type, f"{val_id}.json")))
@@ -337,7 +334,7 @@ def _main(args):
 
             try:
                 if args.gpt_type == 'gpt3.5':
-                    response = openai.Completion.create( # use openai.ChatCompletion for GPT-4
+                    response = openai_client.completions.create(
                         model=args.gpt_name,
                         prompt=prompt_for_gpt3,
                         temperature=args.temperature,
@@ -348,8 +345,8 @@ def _main(args):
                         stop="Condition:",
                         n=args.n_iter,
                     )
-                elif args.gpt_type in ['gpt3.5', 'gpt4']:
-                    response = openai.ChatCompletion.create(
+                elif args.gpt_type in ['gpt3.5-chat', 'gpt4']:
+                    response = openai_client.chat.completions.create(
                         model=args.gpt_name,
                         messages=prompt_for_gpt3,
                         temperature=0.7,
@@ -357,44 +354,65 @@ def _main(args):
                         top_p=1.0,
                         frequency_penalty=0.0,
                         presence_penalty=0.0,
-                        stop="Condition:",
+                        stop=["Condition:"],
                         n=args.n_iter,
                     )
                 else:
                     raise NotImplementedError
                 break
-            except openai.error.ServiceUnavailableError:
-                print('OpenAI ServiceUnavailableError.\tWill try again in 5 seconds.')
+            except APIConnectionError:
+                print('OpenAI APIConnectionError.\tWill try again in 5 seconds.')
                 time.sleep(5)
-            except openai.error.RateLimitError:
+            except RateLimitError:
                 print('OpenAI RateLimitError.\tWill try again in 5 seconds.')
                 time.sleep(5)
-            except openai.error.InvalidRequestError as e:
+            except BadRequestError as e:
                 print(e)
                 print('Input too long. Will shrink the prompting examples.')
                 top_k -= 1
-            except openai.error.APIError as e:
-                print('OpenAI Bad Gateway Error.\tWill try again in 5 seconds.')
+            except APIError as e:
+                print('OpenAI API Error.\tWill try again in 5 seconds.')
                 time.sleep(5)
         
         os.makedirs(op.join(args.output_dir, 'tmp', args.gpt_type), exist_ok=True)
-        write_json(op.join(args.output_dir, 'tmp', args.gpt_type, f"{val_id}.json"), response)
-        response['prompt'] = prompt_for_gpt3
-        all_responses.append(response)
+        # Convert response to dict for JSON serialization and caching
+        response_dict = response.model_dump() if hasattr(response, 'model_dump') else response
+        write_json(op.join(args.output_dir, 'tmp', args.gpt_type, f"{val_id}.json"), response_dict)
+        response_dict['prompt'] = prompt_for_gpt3
+        all_responses.append(response_dict)
 
         for i_iter in range(args.n_iter):
             # parse output
             if args.verbose:
                 try:
-                    print(response['choices'][i_iter]['text'])
-                except:
-                    print(response['choices'][i_iter]['message']['content'])
+                    if hasattr(response, 'choices'):
+                        # New API response object
+                        if args.gpt_type == 'gpt3.5':
+                            print(response.choices[i_iter].text)
+                        else:
+                            print(response.choices[i_iter].message.content)
+                    else:
+                        # Cached dict response
+                        if args.gpt_type == 'gpt3.5':
+                            print(response['choices'][i_iter]['text'])
+                        else:
+                            print(response['choices'][i_iter]['message']['content'])
+                except Exception as e:
+                    print(f"Error printing response: {e}")
 
             predicted_object_list = []
-            if args.gpt_type == 'gpt3.5':
-                line_list = response['choices'][i_iter]['text'].split('\n')
+            if hasattr(response, 'choices'):
+                # New API response object
+                if args.gpt_type == 'gpt3.5':
+                    line_list = response.choices[i_iter].text.split('\n')
+                else:
+                    line_list = response.choices[i_iter].message.content.split('\n')
             else:
-                line_list = response['choices'][i_iter]['message']['content'].split('\n')
+                # Cached dict response
+                if args.gpt_type == 'gpt3.5':
+                    line_list = response['choices'][i_iter]['text'].split('\n')
+                else:
+                    line_list = response['choices'][i_iter]['message']['content'].split('\n')
 
             n_lines.append(len(line_list))
             for line in line_list:

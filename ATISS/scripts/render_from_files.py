@@ -40,7 +40,10 @@ from simple_3dviz.behaviours.trajectory import Circle
 from simple_3dviz.renderables.textured_mesh import TexturedMesh, Material
 # from simple_3dviz.utils import render
 from utils import render
-from simple_3dviz.window import show
+try:
+    from simple_3dviz.window import show
+except ImportError:
+    show = None  # Will fail if --without_screen is not used
 from simple_3dviz.io import read_mesh_file
 
 from utils import floor_plan_from_scene, export_scene, get_3d_box, box3d_iou

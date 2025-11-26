@@ -38,31 +38,101 @@
 
 
 ## Installation & Dependencies
-LayoutGPT and the downstream generation requires different libraries. You can install everything all at once
+
+### Quick Setup with uv (Recommended)
+
+This project uses [uv](https://docs.astral.sh/uv/) for fast, reliable dependency management.
+
+```bash
+# Install uv if you don't have it
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Create virtual environment and install all dependencies
+uv sync
+
+# Install simple-3dviz (required for 3D visualization, uses legacy setup.py)
+.venv/bin/python -m pip install simple-3dviz
+
+# Activate the virtual environment
+source .venv/bin/activate
 ```
-conda create -n layoutgpt python=3.8 -y
-pip install -r requirements.txt
+
+**Note:** Due to `simple-3dviz` using legacy distutils installation, always activate the venv with `source .venv/bin/activate` and run scripts with `python` directly, rather than using `uv run`.
+
+### Environment Variables
+
+Set your OpenAI API key:
+```bash
+export OPENAI_API_KEY="your-api-key"
 ```
-and additionally
-```
-# for GLIGEN
+
+### Additional Downloads
+
+```bash
+# for GLIGEN (optional, for image generation)
+mkdir -p gligen/gligen_checkpoints
 wget https://huggingface.co/gligen/gligen-generation-text-box/resolve/main/diffusion_pytorch_model.bin -O gligen/gligen_checkpoints/checkpoint_generation_text.pth
 
-# for image evaluation using GLIP
+# for image evaluation using GLIP (optional)
 cd eval_models/GLIP
 python setup.py build develop --user
 wget https://github.com/SwinTransformer/storage/releases/download/v1.0.0/swin_large_patch4_window12_384_22k.pth -O MODEL/swin_large_patch4_window12_384_22k.pth
 wget https://huggingface.co/GLIPModel/GLIP/resolve/main/glip_large_model.pth?download=true -O MODEL/glip_large_model.pth
-
-# for scene synthesis
-cd ATISS
-python setup.py build_ext --inplace
-pip install -e .
 ```
+
+### Legacy Setup (conda)
+
+If you prefer conda:
+```bash
+conda create -n layoutgpt python=3.8 -y
+pip install -r requirements.txt
+cd ATISS && pip install -e .
+```
+
 You may also refer to the official repo of [GLIGEN](https://github.com/gligen/GLIGEN/tree/master), [GLIP](https://github.com/microsoft/GLIP) and [ATISS](https://github.com/nv-tlabs/ATISS/tree/master) for detailed guidance.
 
+## Supported Tasks
+
+LayoutGPT supports two types of layout generation:
+
+### 1. 2D Image Layouts (NSR-1K benchmark)
+Generate 2D bounding box layouts from natural language prompts for image generation.
+
+**Counting task** (762 prompts) - specify object counts:
+- "three clocks"
+- "five giraffes are in the photo"
+- "one clock in the image"
+
+**Spatial task** (283 prompts) - specify spatial relationships:
+- "a toilet to the left of a dog"
+- "a bird under a car"
+- "a vase to the left of a bicycle"
+
+### 2. 3D Indoor Scene Layouts (3D-FRONT dataset)
+Generate 3D furniture arrangements given room constraints.
+
+**Input**: Room type and dimensions (e.g., `bedroom, 270px × 252px`)
+
+**Output**: 3D furniture placements with position, size, and orientation
+
+**Supported room types:**
+- `bedroom` (~680 validation scenes, ~2100 training scenes)
+- `livingroom` (~420 validation scenes, ~560 training scenes)
+
+**Available furniture (22 categories):**
+```
+armchair, bookshelf, cabinet, ceiling_lamp, chair, children_cabinet,
+coffee_table, desk, double_bed, dressing_chair, dressing_table,
+floor_lamp, kids_bed, nightstand, pendant_lamp, shelf, single_bed,
+sofa, stool, table, tv_stand, wardrobe
+```
+
+The 3D task uses **in-context learning** - GPT-4 is shown similar room examples from the training set, then generates furniture layouts for new room configurations.
+
+---
+
 ## Data Preparation
-Our image layout benchmark NSR-1K and the 3D scene data split is provided under ```./dataset```. 
+Our image layout benchmark NSR-1K and the 3D scene data split is provided under ```./dataset```.
 
 ### 2D image layouts
 NSR-1K contains ground truth image layouts for each prompt extracted from the MSCOCO dataset. The extracted clip image features are provided under  ```./dataset/NSR-1K/```. The json files contain ground truth layouts, captions and other metadata.
@@ -98,47 +168,57 @@ python pickle_threed_future_dataset.py path_to_pickle_output_dir path_to_3d_fron
 
 
 ## 2D Image Layout Generation
-We provide the script to generate layouts for NSR-1K benchmark. First set up your openai authentication in the script. Then run
-```
+We provide the script to generate layouts for NSR-1K benchmark. Make sure `OPENAI_API_KEY` is set and the venv is activated, then run:
+```bash
 python run_layoutgpt_2d.py --icl_type k-similar --K 8 --setting counting --llm_type gpt4 --n_iter 5
 ```
-The generated layout will be saved to ```./llm_output/counting``` by default. To generate images based on the layouts, run
-```
+The generated layout will be saved to ```./llm_output/counting``` by default. To generate images based on the layouts, run:
+```bash
 cd gligen
 python gligen_layout_counting.py --file ../llm_output/counting/gpt4.counting.k-similar.k_8.px_64.json --batch_size 5
 ```
 Note that the script will save a clean image and an image with bounding boxes for each prompt into two separate folders. In our experiment in the preprint, we generate 5 different layouts for each prompt to reduce variance. 
 
 ### Layout & Image Evaluation
-To evaluate the raw layouts, run
-```
+To evaluate the raw layouts, run:
+```bash
 # for numerical prompts
-python eval_counting_layout.py --file ../llm_output/counting/gpt4.counting.k-similar.k_8.px_64.json
+python eval_counting_layout.py --file ./llm_output/counting/gpt4.counting.k-similar.k_8.px_64.json
 ```
-To evaluate the generated images using GLIP, run
-```
+To evaluate the generated images using GLIP, run:
+```bash
 cd eval_models/GLIP
 python eval_counting.py --dir path_to_generated_clean_images
 ```
 
 
 ## 3D Indoor Scene Synthesis
-First set up your openai authentication in the script, then run the script to generate scenes
+Make sure `OPENAI_API_KEY` is set and the venv is activated, then run the script to generate scenes:
+```bash
+# Quick test (5 scenes, ~2-3 minutes)
+python run_layoutgpt_3d.py --dataset_dir ./ATISS/data_output --icl_type k-similar --K 8 --room bedroom --gpt_type gpt4 --unit px --normalize --regular_floor_plan --test
+
+# Full validation set (680 scenes for bedroom, ~5 hours with GPT-4)
+python run_layoutgpt_3d.py --dataset_dir ./ATISS/data_output --icl_type k-similar --K 8 --room bedroom --gpt_type gpt4 --unit px --normalize --regular_floor_plan
 ```
-python run_layoutgpt_3d.py --dataset_dir ./ATISS/data_output --icl_type k-similar --K 8 --room bedroom --llm_type gpt4 --unit px --normalize --regular_floor_plan
-```
-To evaluate the out-of-bound rate (OOB) and KL divergence (KL-div.) of the generated layouts, run
-```
+
+**Runtime notes:**
+- Each scene requires one GPT-4 API call (~25-30 seconds per scene)
+- Use `--test` flag for quick validation (processes only 5 samples)
+- Full bedroom validation set: ~680 scenes (~5 hours)
+- Full livingroom validation set: ~813 scenes (~6 hours)
+To evaluate the out-of-bound rate (OOB) and KL divergence (KL-div.) of the generated layouts, run:
+```bash
 python eval_scene_layout.py --dataset_dir ./ATISS/data_output --file ./llm_output/3D/gpt4.bedroom.k-similar.k_8.px_regular.json --room bedroom
 ```
 ### Blender Visualization
-Run the following command to generte necessary files and have a low-quality visualization of the scene:
-```
+Run the following command to generate necessary files and have a low-quality visualization of the scene:
+```bash
 cd ATISS/scripts
 python render_from_files.py ../config/bedrooms_eval_config.yaml ../visualization ../data_output_future/threed_future_model_bedroom.pkl ../demo/floor_plan_texture_images ../../llm_output/3D/gpt4.bedroom.k-similar.k_8.px_regular.json --without_screen --up_vector 0,1,0 --camera_position 2,2,2 --split test_regular --export_scene
 ```
 With ```--export_scene```, object and material files for each scene will be saved to a folder in ```./ATISS/visualization/```. Make sure you download [Blender](https://download.blender.org/release/Blender3.5/) and can execute [from command line](https://docs.blender.org/manual/en/2.79/render/workflows/command_line.html) ([Linux](https://github.com/chenguolin/InstructScene/tree/main/blender)&Windows: extract .tar.xz/.zip, Mac: install .dmg and then make an alias).
-```
+```bash
 # example
 blender -b -P render_with_blender.py -- --input_dir ../visualization/test_Bedroom-803 --output_dir ../visualization/test_Bedroom-803.png --camera_position 0 0 5
 ```

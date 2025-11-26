@@ -9,13 +9,13 @@ from tqdm import tqdm
 import time
 import random
 import argparse
-import openai
+from openai import OpenAI, APIError, RateLimitError, APIConnectionError, BadRequestError
 from transformers import GPT2TokenizerFast, LlamaForCausalLM, LlamaTokenizer
 import transformers
 from utils import *
 
-openai.organization = ""
-openai.api_key = ""
+# Initialize OpenAI client (uses OPENAI_API_KEY env var)
+openai_client = OpenAI()
 
 # GPT-3 Type
 llm_name2id = {
@@ -230,9 +230,9 @@ def gpt_generation(prompt_for_gpt, f_gpt_create, args, **kwargs):
     response = f_gpt_create(**input_kwargs)
 
     if args.llm_type == 'gpt3.5':
-        response_text = [r["text"] for r in response.choices]
+        response_text = [r.text for r in response.choices]
     else:
-        response_text = [r["message"]["content"] for r in response.choices]
+        response_text = [r.message.content for r in response.choices]
 
     return response_text, response
 
@@ -297,10 +297,10 @@ def _main(args):
 
         if args.llm_type == 'gpt3.5':
             f_form_prompt = form_prompt_for_gpt3
-            model = openai.Completion.create
+            model = openai_client.completions.create
         else:
             f_form_prompt = form_prompt_for_chatgpt
-            model = openai.ChatCompletion.create
+            model = openai_client.chat.completions.create
 
         f_llm_generation = gpt_generation
     else:
@@ -323,13 +323,13 @@ def _main(args):
             try:
                 response, raw_response = f_llm_generation(prompt_for_gpt, model, args, eos_token_id=tokenizer.eos_token_id)
                 break
-            except openai.error.ServiceUnavailableError:
-                print('OpenAI ServiceUnavailableError.\tWill try again in 5 seconds.')
+            except APIConnectionError:
+                print('OpenAI APIConnectionError.\tWill try again in 5 seconds.')
                 time.sleep(5)
-            except openai.error.RateLimitError:
+            except RateLimitError:
                 print('OpenAI RateLimitError.\tWill try again in 5 seconds.')
                 time.sleep(5)
-            except openai.error.InvalidRequestError as e:
+            except BadRequestError as e:
                 print(e)
                 print('Input too long. Will shrink the prompting examples.')
                 top_k -= 1
